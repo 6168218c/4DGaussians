@@ -52,6 +52,8 @@ class ModelParams(ParamGroup):
         self._images = "images"
         self._resolution = -1
         self._white_background = True
+        self.override_h = -1
+        self.override_w = -1
         self.data_device = "cuda"
         self.eval = True
         self.render_process=False
@@ -147,6 +149,15 @@ class OptimizationParams(ParamGroup):
         self.opacity_threshold_fine_after = 0.005
         self.batch_size=1
         self.add_point=False
+        
+        self.prompt = ""
+        self.source_prompt = ""
+        self.num_inference_steps = 50
+        self.initial_skip_steps = 14
+        self.guidance_scale = 5.5
+        self.source_guidance_scale = 1.5
+        self.camera_selection_batch_size = 10
+        self.iters_per_step = 1000
         super().__init__(parser, "Optimization Parameters")
 
 def get_combined_args(parser : ArgumentParser):

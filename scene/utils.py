@@ -423,6 +423,18 @@ class Camera:
 mse2psnr = lambda x : -10. * torch.log10(x)
 to8b = lambda x : (255*np.clip(x,0,1)).astype(np.uint8)
 
+from utils.graphics_utils import focal2fov
+class EditableMixin:
+  def set_editing(self, editing=True):
+    self.editing = editing
+  def is_editing(self):
+    return hasattr(self,'editing') and self.editing
+  def get_override_fov(self, aspect_ratio):
+    fovX = focal2fov(self.focal[0], self.image_width)
+    fovY = focal2fov(self.focal[0], self.image_width * aspect_ratio)
+        
+    return fovX, fovY
+
 
 
 ''' Checkpoint utils

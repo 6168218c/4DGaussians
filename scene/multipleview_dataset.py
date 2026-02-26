@@ -6,10 +6,11 @@ from utils.graphics_utils import focal2fov
 from scene.colmap_loader import qvec2rotmat
 from scene.dataset_readers import CameraInfo
 from scene.neural_3D_dataset_NDC import get_spiral
+from scene.utils import EditableMixin
 from torchvision import transforms as T
 
 
-class multipleview_dataset(Dataset):
+class multipleview_dataset(Dataset, EditableMixin):
     def __init__(
         self,
         cam_extrinsics,
@@ -18,8 +19,8 @@ class multipleview_dataset(Dataset):
         split
     ):
         self.focal = [cam_intrinsics[1].params[0], cam_intrinsics[1].params[0]]
-        height=cam_intrinsics[1].height
-        width=cam_intrinsics[1].width
+        self.image_height = height=cam_intrinsics[1].height
+        self.image_width = width=cam_intrinsics[1].width
         self.FovY = focal2fov(self.focal[0], height)
         self.FovX = focal2fov(self.focal[0], width)
         self.transform = T.ToTensor()
@@ -88,8 +89,11 @@ class multipleview_dataset(Dataset):
     def __len__(self):
         return len(self.image_paths)
     def __getitem__(self, index):
-        img = Image.open(self.image_paths[index])
-        img = self.transform(img)
+        if self.is_editing():
+            img = None
+        else:
+            img = Image.open(self.image_paths[index])
+            img = self.transform(img)
         return img, self.image_poses[index], self.image_times[index]
     def load_pose(self,index):
         return self.image_poses[index]

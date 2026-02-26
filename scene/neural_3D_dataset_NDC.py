@@ -11,6 +11,7 @@ from torch.utils.data import Dataset
 from torchvision import transforms as T
 from tqdm import tqdm
 
+from scene.utils import EditableMixin
 
 def normalize(v):
     """Normalize a vector."""
@@ -207,7 +208,7 @@ def get_spiral(c2ws_all, near_fars, rads_scale=1.0, N_views=120):
     return np.stack(render_poses)
 
 
-class Neural3D_NDC_Dataset(Dataset):
+class Neural3D_NDC_Dataset(Dataset, EditableMixin):
     def __init__(
         self,
         datadir,
@@ -269,6 +270,8 @@ class Neural3D_NDC_Dataset(Dataset):
 
         H, W, focal = poses[0, :, -1]
         focal = focal / self.downsample
+        self.image_width = W / self.downsample
+        self.image_height = H / self.downsample
         self.focal = [focal, focal]
         poses = np.concatenate([poses[..., 1:2], -poses[..., :1], poses[..., 2:4]], -1)
         # poses, _ = center_poses(
@@ -367,10 +370,13 @@ class Neural3D_NDC_Dataset(Dataset):
     def __len__(self):
         return len(self.image_paths)
     def __getitem__(self,index):
-        img = Image.open(self.image_paths[index])
-        img = img.resize(self.img_wh, Image.LANCZOS)
+        if self.is_editing():
+            img = None
+        else:
+            img = Image.open(self.image_paths[index])
+            img = img.resize(self.img_wh, Image.LANCZOS)
 
-        img = self.transform(img)
+            img = self.transform(img)
         return img, self.image_poses[index], self.image_times[index]
     def load_pose(self,index):
         return self.image_poses[index]
