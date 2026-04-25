@@ -913,7 +913,7 @@ class FluxEditPipeline(FluxPipeline):
         timesteps = timesteps[num_skipped_initial_steps:]
         timesteps = timesteps[:num_transport_steps]
         
-        init_noise = randn_tensor(shape=source_clean_latents.shape, generator=generator, device=device, dtype=source_clean_latents.dtype)
+        # init_noise = randn_tensor(shape=source_clean_latents.shape, generator=generator, device=device, dtype=source_clean_latents.dtype)
 
         # 6. Denoising loop
         # We set the index here to remove DtoH sync, helpful especially during compilation.
@@ -1147,6 +1147,10 @@ class EditController:
             response_queue.get(block=True)
             
         self.current_step += 1
+        
+    def has_reached_max_step(self):
+        assert self.step_sizes is not None and len(self.step_sizes) > 0, "step_sizes must be provided to use has_reached_max_step"
+        return self.current_step >= len(self.step_sizes)
     
 def encode_source_image_batch(pipeline, batch_data, device):
     real_batch_size = len(batch_data)
@@ -1241,6 +1245,7 @@ def guidance_worker_fn(rank:int, source_latents_path: str, request_queue: mp.Que
                 else:
                     memory_previous_edited_image = {}
                 edit_epoch = edit_epoch + 1
+                torch.cuda.empty_cache()
                 response_queue.put(edit_epoch)
             else:
                 if edit_epoch < 0:
@@ -1259,7 +1264,7 @@ def setup_guidance_worker_and_dataset(dataset, output_root_dir, source_image_pro
         logger.info("Encoding source images and caching latents...")
         source_latents = []
         source_images = source_image_producer()
-        ENCODE_BATCH_SIZE = 32
+        ENCODE_BATCH_SIZE = 8
         pipeline = create_guidance_pipeline().to(main_device)
         for batch in tqdm(range(0, len(source_images), ENCODE_BATCH_SIZE), desc="Encoding source images"):
             batch_data = source_images[batch:batch + ENCODE_BATCH_SIZE].to(main_device)

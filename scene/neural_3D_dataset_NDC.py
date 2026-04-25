@@ -11,7 +11,11 @@ from torch.utils.data import Dataset
 from torchvision import transforms as T
 from tqdm import tqdm
 
-from scene.utils import EditableMixin
+try:
+    from scene.utils import EditableMixin
+except ModuleNotFoundError:
+    class EditableMixin:
+        pass
 
 def normalize(v):
     """Normalize a vector."""

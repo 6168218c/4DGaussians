@@ -52,7 +52,6 @@ try:
     TENSORBOARD_FOUND = True
 except ImportError:
     TENSORBOARD_FOUND = False
-EDIT_PREFIX = "tpedit"    
 
 def sample_timewise_viewpoints(dataset, num_poses, frame_length, selection_batch_size=None):
     if selection_batch_size is None:
@@ -99,9 +98,9 @@ def scene_finetune(dataset, opt, hyper, pipe, testing_iterations, saving_iterati
     train_cams = scene.getTrainCameras()
 
     main_device = gaussians.get_xyz.device
-    output_root_dir = os.path.join(args.model_path, EDIT_PREFIX)
-    source_image_generator = lambda : render_source_image(range(len(train_cams)), dataset, pipe, gaussians, scene, current_step=0, display_progress=True)
-    workers, controller, edit_cache, index_dataset = setup_guidance_worker_and_dataset(train_cams, output_root_dir, source_image_generator, opt.prompt, opt.source_prompt, 
+    # output_root_dir = os.path.join(args.model_path, EDIT_PREFIX)
+    source_image_generator = lambda : render_source_image(range(len(train_cams)), dataset, pipe, gaussians, scene, current_step=0, display_progress=True).cpu()
+    workers, controller, edit_cache, index_dataset = setup_guidance_worker_and_dataset(train_cams, scene.edit_model_path, source_image_generator, opt.prompt, opt.source_prompt, 
                                                                             opt.num_inference_steps, opt.initial_skip_steps, main_device, [torch.device("cuda:0"), torch.device("cuda:1")], opt.guidance_scale, opt.source_guidance_scale)
 
     num_poses = len(index_dataset.dataset.dataset.poses)
@@ -323,11 +322,16 @@ def scene_finetune(dataset, opt, hyper, pipe, testing_iterations, saving_iterati
                 render_viewpoint_stack = sample_timewise_viewpoints(index_dataset, num_poses, frame_length)
                 render_source_image([idx for idx, _ in render_viewpoint_stack], dataset, pipe, ref_gaussians, scene, current_step=edit_epoch, dump_subname=f"renders/edit_epoch")
                 controller.step(new_transport_steps=4, edited_images=edited_images, ordered_edit_ids=indexes)
-                
+                if controller.has_reached_max_step():
+                    print("Guidance worker has reached max step, stop training.")
+                    print("\n[ITER {}] Saving Checkpoint and Gaussians".format(iteration))
+                    torch.save((gaussians.capture(), iteration), scene.edit_model_path + "/chkpnt" +f"_{stage}_" + str(iteration) + ".pth")
+                    scene.save(iteration, stage)
+                    break
 
             if (iteration in checkpoint_iterations):
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
-                torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" +f"_{stage}_" + str(iteration) + ".pth")
+                torch.save((gaussians.capture(), iteration), scene.edit_model_path + "/chkpnt" +f"_{stage}_" + str(iteration) + ".pth")
 
 @torch.no_grad()
 def render_source_image(indexs, dataset, pipe, gaussians, scene, current_step, display_progress=False, dump_subname=None):
@@ -336,13 +340,13 @@ def render_source_image(indexs, dataset, pipe, gaussians, scene, current_step, d
     cameras = scene.getTrainCameras()
     images = []
     if dump_subname is not None:
-        output_dir = os.path.join(args.model_path, EDIT_PREFIX, f"{dump_subname}_{current_step}")
+        output_dir = os.path.join(scene.edit_model_path, f"{dump_subname}_{current_step}")
         os.makedirs(output_dir, exist_ok=True)
     for idx in tqdm(indexs, desc="Rendering trained images", disable=not display_progress):
         viewpoint_cam = cameras[idx]
         render_pkg = render(viewpoint_cam, gaussians, pipe, background, stage="fine", cam_type=scene.dataset_type)
         image = render_pkg["render"]
-        images.append(image)
+        images.append(image.cpu())
         if dump_subname is not None:
             save_path = os.path.join(output_dir, f"{idx:04d}.png")
             Image.fromarray(to8b(image.permute(1,2,0))).save(save_path)
@@ -353,6 +357,7 @@ def training(dataset, hyper, opt, pipe, testing_iterations, saving_iterations, c
     tb_writer = prepare_output_and_logger(expname)
     gaussians = GaussianModel(dataset.sh_degree, hyper)
     dataset.model_path = args.model_path
+    dataset.edit_model_path = args.edit_model_path
     timer = Timer()
     scene = EditScene(dataset, gaussians, load_coarse=None, editing=True)
     timer.start()
@@ -363,25 +368,26 @@ def training(dataset, hyper, opt, pipe, testing_iterations, saving_iterations, c
                          checkpoint_iterations, checkpoint, debug_from,
                          gaussians, scene, "fine", tb_writer, opt.iterations,timer)
 
-def prepare_output_and_logger(expname):    
-    if not args.model_path:
+def prepare_output_and_logger(expname):
+    assert args.model_path, "The source model path should be provided."
+    if not args.edit_model_path:
         # if os.getenv('OAR_JOB_ID'):
         #     unique_str=os.getenv('OAR_JOB_ID')
         # else:
         #     unique_str = str(uuid.uuid4())
         unique_str = expname
 
-        args.model_path = os.path.join("./output/", unique_str)
+        args.edit_model_path = os.path.join("./output/", unique_str)
     # Set up output folder
-    print("Output folder: {}".format(args.model_path))
-    os.makedirs(os.path.join(args.model_path, EDIT_PREFIX), exist_ok = True)
-    with open(os.path.join(args.model_path, EDIT_PREFIX, "cfg_args"), 'w') as cfg_log_f:
+    print("Output folder: {}".format(args.edit_model_path))
+    os.makedirs(args.edit_model_path, exist_ok = True)
+    with open(os.path.join(args.edit_model_path, "cfg_args"), 'w') as cfg_log_f:
         cfg_log_f.write(str(Namespace(**vars(args))))
 
     # Create Tensorboard writer
     tb_writer = None
     if TENSORBOARD_FOUND:
-        tb_writer = SummaryWriter(os.path.join(args.model_path, EDIT_PREFIX))
+        tb_writer = SummaryWriter(args.edit_model_path)
     else:
         print("Tensorboard not available: not logging progress")
     return tb_writer
@@ -473,7 +479,7 @@ if __name__ == "__main__":
         from utils.params_utils import merge_hparams
         config = mmcv.Config.fromfile(args.configs)
         args = merge_hparams(args, config)
-    print("Optimizing " + args.model_path)
+    print("Editing " + args.edit_model_path + " with source model " + args.model_path)
 
     # Initialize system state (RNG)
     safe_state(args.quiet)

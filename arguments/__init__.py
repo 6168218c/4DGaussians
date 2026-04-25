@@ -49,6 +49,7 @@ class ModelParams(ParamGroup):
         self.sh_degree = 3
         self._source_path = ""
         self._model_path = ""
+        self._edit_model_path = ""
         self._images = "images"
         self._resolution = -1
         self._white_background = True
@@ -156,8 +157,8 @@ class OptimizationParams(ParamGroup):
         self.initial_skip_steps = 14
         self.guidance_scale = 5.5
         self.source_guidance_scale = 1.5
-        self.camera_selection_batch_size = 10
-        self.iters_per_step = 1000
+        self.camera_selection_batch_size = 5
+        self.iters_per_step = 1500
         super().__init__(parser, "Optimization Parameters")
 
 def get_combined_args(parser : ArgumentParser):

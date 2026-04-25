@@ -119,11 +119,12 @@ class EditScene:
         :param path: Path to colmap scene main folder.
         """
         self.model_path = args.model_path
+        self.edit_model_path = args.edit_model_path
         self.loaded_iter = None
         self.gaussians = gaussians
         
         if load_iteration or editing:
-            if load_iteration == -1:
+            if (not load_iteration and editing) or load_iteration == -1:
                 self.loaded_iter = searchForMaxIteration(os.path.join(self.model_path, "point_cloud"))
             else:
                 self.loaded_iter = load_iteration
@@ -196,9 +197,9 @@ class EditScene:
 
     def save(self, iteration, stage):
         if stage == "coarse":
-            point_cloud_path = os.path.join(self.model_path, "point_cloud/coarse_iteration_{}".format(iteration))
+            point_cloud_path = os.path.join(self.edit_model_path, "point_cloud/coarse_iteration_{}".format(iteration))
         else:
-            point_cloud_path = os.path.join(self.model_path, "point_cloud/iteration_{}".format(iteration))
+            point_cloud_path = os.path.join(self.edit_model_path, "point_cloud/iteration_{}".format(iteration))
         self.gaussians.save_ply(os.path.join(point_cloud_path, "point_cloud.ply"))
         self.gaussians.save_deformation(point_cloud_path)
     def getTrainCameras(self, scale=1.0):
