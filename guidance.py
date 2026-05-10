@@ -1263,9 +1263,13 @@ def setup_guidance_worker_and_dataset(dataset, output_root_dir, source_image_pro
     if not os.path.exists(cache_path):
         logger.info("Encoding source images and caching latents...")
         source_latents = []
-        source_images = source_image_producer()
+        source_images = source_image_producer().to("cpu")
+        torch.cuda.empty_cache()
         ENCODE_BATCH_SIZE = 8
-        pipeline = create_guidance_pipeline().to(main_device)
+        pipeline = FluxEditPipeline.from_pretrained(
+            "black-forest-labs/FLUX.1-dev", torch_dtype=torch.bfloat16
+        )
+        pipeline.vae.to(main_device)
         for batch in tqdm(range(0, len(source_images), ENCODE_BATCH_SIZE), desc="Encoding source images"):
             batch_data = source_images[batch:batch + ENCODE_BATCH_SIZE].to(main_device)
             batch_source_latents, _ = encode_source_image_batch(pipeline, batch_data, main_device)
@@ -1333,12 +1337,12 @@ if __name__ == "__main__":
         for iter_index, skipped_steps in enumerate(range(14, 50, transport_step_per_iter)):
             frames = frames.to("cuda")
             images = pipeline(
-                prompt="A realistic medium shot of a woman wearing a light yellow shirt in an apron slicing meat in a cluttered kitchen at night.", 
+                prompt="A man in an apron slicing meat in a cluttered kitchen at night, painting style, vangogh style", 
                 source_prompt="A realistic medium shot of a man in an apron slicing meat in a cluttered kitchen at night.",
                 num_inference_steps=50,
                 num_skipped_initial_steps=skipped_steps, 
                 num_transport_steps=transport_step_per_iter,
-                guidance_scale=3.5,
+                guidance_scale=12.5,
                 source_guidance_scale=1.5,
                 num_images_per_prompt=len(frames),
                 image=images,
