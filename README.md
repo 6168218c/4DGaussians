@@ -182,6 +182,13 @@ python train.py -s data/your-ns-data/colmap --port 6017 --expname "custom" --con
 ```
 You can customize your training config through the config files.
 
+## Editing
+
+After training, you can edit your model with the guidance module. You can run:
+```bash
+python main.py -m path/to/trained_scene -s path/to/original/dataset --config arguments/dynerf/coffee_martini_edit.py --expname "your exp name"
+```
+
 ## Checkpoint
 
 Also, you can train your model with checkpoint.
