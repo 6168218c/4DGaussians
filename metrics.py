@@ -33,8 +33,13 @@ def readImages(renders_dir, gt_dir):
         image_names.append(fname)
     return renders, gts, image_names
 
+@torch.no_grad()
 def evaluate(model_paths):
-
+    from transformers.models.clip import CLIPModel, CLIPProcessor
+    clip_model_name = "openai/clip-vit-large-patch14"
+    clip_model = CLIPModel.from_pretrained(clip_model_name).eval().cuda()
+    clip_processor = CLIPProcessor.from_pretrained(clip_model_name)
+    
     full_dict = {}
     per_view_dict = {}
     full_dict_polytopeonly = {}
@@ -50,6 +55,7 @@ def evaluate(model_paths):
             per_view_dict_polytopeonly[scene_dir] = {}
 
             test_dir = Path(scene_dir) / "test"
+            prompt_path = Path(scene_dir) / "tgt_prompt.txt"
 
             for method in os.listdir(test_dir):
                 print("Method:", method)
@@ -63,6 +69,12 @@ def evaluate(model_paths):
                 gt_dir = method_dir/ "gt"
                 renders_dir = method_dir / "renders"
                 renders, gts, image_names = readImages(renders_dir, gt_dir)
+                
+                if prompt_path.exists():
+                    with open(prompt_path, "r") as f:
+                        tgt_prompt = f.read().strip()
+                else:
+                    tgt_prompt = None
 
                 ssims = []
                 psnrs = []
@@ -70,6 +82,7 @@ def evaluate(model_paths):
                 lpipsa = []
                 ms_ssims = []
                 Dssims = []
+                Clips = []
                 for idx in tqdm(range(len(renders)), desc="Metric evaluation progress"):
                     ssims.append(ssim(renders[idx], gts[idx]))
                     psnrs.append(psnr(renders[idx], gts[idx]))
@@ -77,6 +90,11 @@ def evaluate(model_paths):
                     ms_ssims.append(ms_ssim(renders[idx], gts[idx],data_range=1, size_average=True ))
                     lpipsa.append(lpips(renders[idx], gts[idx], net_type='alex'))
                     Dssims.append((1-ms_ssims[-1])/2)
+                    if tgt_prompt is not None:
+                        inputs = clip_processor(images=renders[idx], text=tgt_prompt, return_tensors="pt").to("cuda")
+                        outputs = clip_model(**inputs)
+                        similarities = outputs.logits_per_text / clip_model.logit_scale.exp()
+                        Clips.append(similarities)
 
                 print("Scene: ", scene_dir,  "SSIM : {:>12.7f}".format(torch.tensor(ssims).mean(), ".5"))
                 print("Scene: ", scene_dir,  "PSNR : {:>12.7f}".format(torch.tensor(psnrs).mean(), ".5"))
@@ -84,14 +102,16 @@ def evaluate(model_paths):
                 print("Scene: ", scene_dir,  "LPIPS-alex: {:>12.7f}".format(torch.tensor(lpipsa).mean(), ".5"))
                 print("Scene: ", scene_dir,  "MS-SSIM: {:>12.7f}".format(torch.tensor(ms_ssims).mean(), ".5"))
                 print("Scene: ", scene_dir,  "D-SSIM: {:>12.7f}".format(torch.tensor(Dssims).mean(), ".5"))
+                if tgt_prompt is not None:
+                    print("Scene: ", scene_dir , "CLIP-T: {:>12.7f}".format(torch.tensor(Clips).mean(), ".5"))
 
                 full_dict[scene_dir][method].update({"SSIM": torch.tensor(ssims).mean().item(),
                                                         "PSNR": torch.tensor(psnrs).mean().item(),
                                                         "LPIPS-vgg": torch.tensor(lpipss).mean().item(),
                                                         "LPIPS-alex": torch.tensor(lpipsa).mean().item(),
                                                         "MS-SSIM": torch.tensor(ms_ssims).mean().item(),
-                                                        "D-SSIM": torch.tensor(Dssims).mean().item()},
-
+                                                        "D-SSIM": torch.tensor(Dssims).mean().item(),
+                                                        "CLIP-T": torch.tensor(Clips).mean().item() if len(Clips) > 0 else None},
                                                     )
                 per_view_dict[scene_dir][method].update({"SSIM": {name: ssim for ssim, name in zip(torch.tensor(ssims).tolist(), image_names)},
                                                             "PSNR": {name: psnr for psnr, name in zip(torch.tensor(psnrs).tolist(), image_names)},
@@ -99,7 +119,7 @@ def evaluate(model_paths):
                                                             "LPIPS-alex": {name: lp for lp, name in zip(torch.tensor(lpipsa).tolist(), image_names)},
                                                             "MS-SSIM": {name: lp for lp, name in zip(torch.tensor(ms_ssims).tolist(), image_names)},
                                                             "D-SSIM": {name: lp for lp, name in zip(torch.tensor(Dssims).tolist(), image_names)},
-
+                                                            "CLIP-T": {name: lp for lp, name in zip(torch.tensor(Clips).tolist(), image_names)} if len(Clips) > 0 else None,
                                                             }
                                                         )
 

@@ -307,7 +307,7 @@ class FluxEditPipeline(FluxPipeline):
             )
         image = image.to(dtype)
 
-        x0 = self.vae.encode(image.to(device)).latent_dist.sample()
+        x0 = self.vae.encode(image.to(device)).latent_dist.mode()
         x0 = (x0 - self.vae.config.shift_factor) * self.vae.config.scaling_factor
         x0 = x0.to(dtype)
         return x0, resized
@@ -1123,14 +1123,14 @@ class EditedImageCache:
         self.queue.put(EditedImageCache.QueueItem(command="clear"))
         
 class EditController:
-    def __init__(self, request_queues: List[mp.Queue], response_queues: List[mp.Queue], edited_cache: EditedImageCache, step_sizes: Optional[List[int]] = None):
+    def __init__(self, request_queues: List[mp.Queue], response_queues: List[mp.Queue], edited_cache: EditedImageCache, step_sizes: List[int]):
         self.request_queues = request_queues
         self.response_queues = response_queues
         self.edited_cache = edited_cache
         self.step_sizes = step_sizes
         self.current_step = -1
         
-    def step(self, new_transport_steps: Optional[int], edited_images: Optional[torch.Tensor], ordered_edit_ids: Optional[List[int]]):
+    def step(self, edited_images: Optional[torch.Tensor], ordered_edit_ids: Optional[List[int]]):
         edit_ids_per_queue = []
         pre_edit_images_per_queue = []
         num_workers = len(self.request_queues)
@@ -1140,17 +1140,26 @@ class EditController:
                 pre_edit_images_per_queue.append(edited_images[start_idx::num_workers])
             else:
                 pre_edit_images_per_queue.append(None)
-        for q, edit_ids, pre_edit_images in zip(self.request_queues, edit_ids_per_queue, pre_edit_images_per_queue):
-            q.put(StepRequest(new_transport_steps=new_transport_steps, edited_images=pre_edit_images, ordered_edit_ids=edit_ids))
+        
+        if self.current_step + 1 < len(self.step_sizes):
+            new_transport_steps = self.step_sizes[self.current_step + 1] if self.step_sizes is not None else None
+            for q, edit_ids, pre_edit_images in zip(self.request_queues, edit_ids_per_queue, pre_edit_images_per_queue):
+                q.put(StepRequest(new_transport_steps=new_transport_steps, edited_images=pre_edit_images, ordered_edit_ids=edit_ids))
+        else:
+            print("INFO: Controller reached final step. ")
         
         for response_queue in self.response_queues:
             response_queue.get(block=True)
             
         self.current_step += 1
         
+    def close(self):
+        for q in self.request_queues:
+            q.put(None)
+        
     def has_reached_max_step(self):
         assert self.step_sizes is not None and len(self.step_sizes) > 0, "step_sizes must be provided to use has_reached_max_step"
-        return self.current_step >= len(self.step_sizes)
+        return self.current_step + 1 >= len(self.step_sizes)
     
 def encode_source_image_batch(pipeline, batch_data, device):
     real_batch_size = len(batch_data)
@@ -1180,7 +1189,7 @@ def guidance_worker_fn(rank:int, source_latents_path: str, request_queue: mp.Que
                        guidance_scale: float = 3.5, source_guidance_scale: float = 1.5):
     logger.info(f"Guidance worker rank {rank} starting on device {device}")
 
-    output_root_dir = os.path.dirname(source_latents_path)
+    # output_root_dir = os.path.dirname(source_latents_path)
     pipeline = create_guidance_pipeline(device=device)
     source_latents = torch.load(source_latents_path, map_location=device)
     edited_cache = EditedImageCache(edited_cache_queue)
@@ -1255,9 +1264,9 @@ def guidance_worker_fn(rank:int, source_latents_path: str, request_queue: mp.Que
                 images = generate(frame_ids)
                 edited_cache.set(frame_ids, images)
     
-def setup_guidance_worker_and_dataset(dataset, output_root_dir, source_image_producer, prompt: str, source_prompt: str, num_inference_steps: int, initial_skip_steps: int, main_device: torch.device, available_devices: list[torch.device],
-                                            guidance_scale: float = 3.5, source_guidance_scale: float = 1.5):
-    cache_path = os.path.join(output_root_dir, "source_latents.pt")
+def setup_guidance_worker_and_dataset(dataset, source_model_dir, source_image_producer, prompt: str, source_prompt: str, num_inference_steps: int, initial_skip_steps: int, main_device: torch.device, available_devices: list[torch.device],
+                                            guidance_scale: float = 3.5, source_guidance_scale: float = 1.5, step_sizes: Optional[List[int]] = None):
+    cache_path = os.path.join(source_model_dir, "source_latents.pt")
     edit_cache_queue = mp.Queue()
     edit_cache = EditedImageCache(edit_cache_queue)
     if not os.path.exists(cache_path):
@@ -1296,7 +1305,20 @@ def setup_guidance_worker_and_dataset(dataset, output_root_dir, source_image_pro
     index_dataset = IndexWrappedDataset(dataset)
     edit_cache.setup(len(dataset), dataset.override_h, dataset.override_w, main_device, master_dataset=dataset)
     
-    step_sizes = [4] * ((num_inference_steps - initial_skip_steps) // 4)
+    step_sizes = [4] * ((num_inference_steps - initial_skip_steps) // 4) if step_sizes is None else step_sizes
+    # validate stepsizes + initial_skip_steps
+    current_sum_steps = initial_skip_steps
+    for i in range(len(step_sizes)):
+        current_sum_steps += step_sizes[i]
+        if current_sum_steps > num_inference_steps:
+            print(f"Warning: step_sizes and initial_skip_steps combination will result in total steps {current_sum_steps} which is greater than num_inference_steps {num_inference_steps}. Adjusting step_sizes accordingly.")
+            step_sizes[i] = num_inference_steps - (current_sum_steps - step_sizes[i])
+            current_sum_steps = num_inference_steps
+            # trim the rest of the step sizes as well
+            step_sizes = step_sizes[:i+1]
+            break
+    print("INFO: Using step sizes ", step_sizes)
+
     controller = EditController(request_queues, response_queues, edit_cache, step_sizes)
     return workers, controller, edit_cache, index_dataset
 

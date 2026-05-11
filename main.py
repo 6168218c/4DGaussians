@@ -100,8 +100,9 @@ def scene_finetune(dataset, opt, hyper, pipe, testing_iterations, saving_iterati
     main_device = gaussians.get_xyz.device
     # output_root_dir = os.path.join(args.model_path, EDIT_PREFIX)
     source_image_generator = lambda : render_source_image(range(len(train_cams)), dataset, pipe, gaussians, scene, current_step=0, display_progress=True).cpu()
-    workers, controller, edit_cache, index_dataset = setup_guidance_worker_and_dataset(train_cams, scene.edit_model_path, source_image_generator, opt.prompt, opt.source_prompt, 
-                                                                            opt.num_inference_steps, opt.initial_skip_steps, main_device, [torch.device("cuda:0"), torch.device("cuda:1")], opt.guidance_scale, opt.source_guidance_scale)
+    workers, controller, edit_cache, index_dataset = setup_guidance_worker_and_dataset(train_cams, scene.model_path, source_image_generator, opt.prompt, opt.source_prompt, 
+                                                                            opt.num_inference_steps, opt.initial_skip_steps, main_device, [torch.device("cuda:0"), torch.device("cuda:1")], \
+                                                                                opt.guidance_scale, opt.source_guidance_scale, opt.step_sizes)
 
     num_poses = len(index_dataset.dataset.dataset.poses)
     frame_length = int(len(index_dataset)/num_poses) # [Index Dataset -> FourDGSEditDataset -> Scene Dataset]
@@ -131,7 +132,7 @@ def scene_finetune(dataset, opt, hyper, pipe, testing_iterations, saving_iterati
     prepared_viewpoint_stack = viewpoint_stack.copy()
     shuffle(prepared_viewpoint_stack)
     ref_gaussians = copy.deepcopy(gaussians)
-    controller.step(new_transport_steps=4, edited_images=None, ordered_edit_ids=[i for i, _ in prepared_viewpoint_stack])
+    controller.step(edited_images=None, ordered_edit_ids=[i for i, _ in prepared_viewpoint_stack])
     for iteration in range(first_iter, final_iter+1):        
         if network_gui.conn == None:
             network_gui.try_connect()
@@ -321,13 +322,15 @@ def scene_finetune(dataset, opt, hyper, pipe, testing_iterations, saving_iterati
                 edited_images = render_source_image(indexes, dataset, pipe, gaussians, scene, current_step=edit_epoch)
                 render_viewpoint_stack = sample_timewise_viewpoints(index_dataset, num_poses, frame_length)
                 render_source_image([idx for idx, _ in render_viewpoint_stack], dataset, pipe, ref_gaussians, scene, current_step=edit_epoch, dump_subname=f"renders/edit_epoch")
-                controller.step(new_transport_steps=4, edited_images=edited_images, ordered_edit_ids=indexes)
                 if controller.has_reached_max_step():
                     print("Guidance worker has reached max step, stop training.")
                     print("\n[ITER {}] Saving Checkpoint and Gaussians".format(iteration))
                     torch.save((gaussians.capture(), iteration), scene.edit_model_path + "/chkpnt" +f"_{stage}_" + str(iteration) + ".pth")
                     scene.save(iteration, stage)
+                    controller.close()
                     break
+                else:
+                    controller.step(edited_images=edited_images, ordered_edit_ids=indexes)
 
             if (iteration in checkpoint_iterations):
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))

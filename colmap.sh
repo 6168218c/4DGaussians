@@ -3,6 +3,7 @@
 workdir=$1
 datatype=$2 # blender, hypernerf, llff
 export CUDA_VISIBLE_DEVICES=0
+export QT_QPA_PLATFORM=offscreen
 rm -rf $workdir/sparse_
 rm -rf $workdir/image_colmap
 python scripts/"$datatype"2colmap.py $workdir

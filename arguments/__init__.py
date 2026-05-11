@@ -159,6 +159,7 @@ class OptimizationParams(ParamGroup):
         self.source_guidance_scale = 1.5
         self.camera_selection_batch_size = 5
         self.iters_per_step = 1500
+        self.step_sizes = None # if not None, will override the default step size schedule of 4 steps per iteration. Should be a list of integers with length equal to num_inference_steps//iters_per_step
         super().__init__(parser, "Optimization Parameters")
 
 def get_combined_args(parser : ArgumentParser):
